@@ -8,6 +8,8 @@ const moment = require('moment-timezone');
 const fs = require('fs').promises;
 const axios = require('axios');
 const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
+
 
 
 const app = express();
@@ -115,16 +117,97 @@ app.post('/search-ventures', async (req, res) => {
 
 
 
-    res.status(200).json(users[0].ventures);
+    res.status(200).json(users[0].ventures.reverse());
   } catch (error) {
     console.error('Erro na pesquisa de perfil:', error);
     res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });
 
-app.post('/create-ventures', async (req, res) => {
+app.post('/search-updates', async (req, res) => {
   try {
-    const { jwt: token, newItem, images } = req.body;
+    const { jwt: token } = req.body;
+
+
+
+    // Verificar se o token é válido
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+
+
+    // Obter usuário pelo ID do token
+    const { data: users } = await supabase
+      .from('venture_manager_users')
+      .select('openai_lastUpdate')
+      .eq('id', decodedToken.userId);
+
+
+
+    if (!users || users.length === 0) {
+      return res.status(401).json({ error: 'Usuário não encontrado' });
+    }
+
+
+
+    res.status(200).json(users[0].openai_lastUpdate);
+  } catch (error) {
+    console.error('Erro na pesquisa de perfil:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+app.post('/update-baseIA', async (req, res) => {
+  try {
+    const { jwt: token } = req.body;
+
+    // Verificar se o token é válido
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Obter usuário pelo ID do token
+    const { data: users } = await supabase
+      .from('venture_manager_users')
+      .select('*')
+      .eq('id', decodedToken.userId);
+
+    if (!users || users.length === 0) {
+      return res.status(401).json({ error: 'Usuário não encontrado' });
+    }
+
+    const data = users[0].ventures;
+    const url = users[0].n8n_url;
+    const apikey = users[0].n8n_apikey;
+
+    // Enviar dados para o webhook
+    await axios.post(`${url}/webhook/update-base`, {
+      data: data
+    }, {
+      headers: {
+        'x-api-key': apikey
+      }
+    });
+
+
+    // Atualizar usuário com o novo item na coluna ventures
+    const { data: updatedUser, error: updateError } = await supabase
+      .from('venture_manager_users')
+      .update({ openai_lastUpdate: moment() })
+      .eq('id', decodedToken.userId)
+      .single();
+
+    if (updateError) {
+      return res.status(500).json({ error: 'Erro ao atualizar usuário' });
+    }
+
+
+    res.status(200).json('Base atualizada com sucesso!');
+  } catch (error) {
+    console.error('Erro na pesquisa de perfil:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+app.post('/manage-ventures', async (req, res) => {
+  try {
+    const { jwt: token, newItem, images, action } = req.body;
 
     // Verificar se o token é válido
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
@@ -145,25 +228,43 @@ app.post('/create-ventures', async (req, res) => {
     }
 
     // Verificar se já existe outro empreendimento com o mesmo nome
-    const exists = users.ventures.some(venture => venture.nome === newItem.name);
-    if (exists) {
-      return res.status(400).json({ error: 'Já existe um empreendimento com esse nome' });
+    const existingIndex = users.ventures.findIndex(venture => venture.idSpace === newItem.idSpace);
+    if (existingIndex !== -1 && action !== 'edit') {
+      return res.status(400).json({ error: 'Já existe um empreendimento com este ID' });
     }
 
-    // Adicionar novo item ao array de empreendimentos
-    const newVenture = {
-      idSpace: newItem.idSpace,
-      nome: newItem.name,
-      preco: newItem.price,
-      imagens: images.map(image => ({
-        link: image.url,
-        descrição: image.description
-      })),
-      descricao: newItem.description, // Você precisa adicionar uma descrição aqui
-      localizacao: newItem.localization
-    };
-
-    const updatedVentures = [...users.ventures, newVenture];
+    const updatedVentures = [...users.ventures];
+    if (action === 'edit') {
+      // Encontrar o item pelo idSpace e atualizá-lo
+      if (existingIndex !== -1) {
+        updatedVentures[existingIndex] = {
+          idSpace: newItem.idSpace,
+          nome: newItem.name,
+          preco: `R$ ${newItem.price}`,
+          imagens: images.map(image => ({
+            link: image.url,
+            descrição: image.description
+          })),
+          descricao: newItem.description,
+          localizacao: newItem.localization
+        };
+      } else {
+        return res.status(404).json({ error: 'Item não encontrado para edição' });
+      }
+    } else {
+      // Adicionar novo item ao array de empreendimentos
+      updatedVentures.push({
+        idSpace: newItem.idSpace,
+        nome: newItem.name,
+        preco: `R$ ${newItem.price}`,
+        imagens: images.map(image => ({
+          link: image.url,
+          descrição: image.description
+        })),
+        descricao: newItem.description,
+        localizacao: newItem.localization
+      });
+    }
 
     // Atualizar usuário com o novo item na coluna ventures
     const { data: updatedUser, error: updateError } = await supabase
@@ -176,13 +277,12 @@ app.post('/create-ventures', async (req, res) => {
       return res.status(500).json({ error: 'Erro ao atualizar usuário' });
     }
 
-    res.status(200).json({ message: 'Empreendimento adicionado com sucesso!' });
+    res.status(200).json({ message: 'Empreendimento ' + (action === 'edit' ? 'editado' : 'adicionado') + ' com sucesso!' });
   } catch (error) {
-    console.error('Erro ao adicionar empreendimento:', error);
+    console.error('Erro ao adicionar/Editar empreendimento:', error);
     res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });
-
 
 app.delete('/delete-venture', async (req, res) => {
   try {
@@ -262,32 +362,6 @@ app.delete('/delete-venture', async (req, res) => {
   }
 });
 
-app.post('/update-ventures', async (req, res) => {
-  try {
-    const { jwt: token, profile } = req.body;
-
-
-    // Verificar se o token é válido
-    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Atualizar o perfil do usuário no banco de dados
-    const { data: updatedUser, error } = await supabase
-      .from('venture_manager_users')
-      .update({ user_profile: profile })
-      .eq('id', decodedToken.userId);
-
-    if (error) {
-      throw error;
-    }
-
-
-    res.status(200).json({ message: 'Perfil atualizado com sucesso' });
-  } catch (error) {
-    console.error('Erro ao atualizar perfil:', error);
-    res.status(500).json({ error: 'Erro interno no servidor' });
-  }
-});
-
 app.post('/upload-image', async (req, res) => {
   try {
     const { jwt: token, images, idSpace } = req.body;
@@ -310,14 +384,15 @@ app.post('/upload-image', async (req, res) => {
       var imagemBuffer = Buffer.from(image.data.split(',')[1], 'base64')
       //console.log(imagemBuffer)
 
+      // Gerar um nome de imagem único usando uuid
+      const imageName = uuidv4();
 
       const { data, error } = await supabase.storage
         .from('venture_manager_files')
-        .upload(`images/${idSpace}/${image.meta.name}`, imagemBuffer, {
+        .upload(`images/${idSpace}/${imageName}`, imagemBuffer, {
           contentType: image.meta.type,
           cacheControl: '3600',
         });
-
 
       if (error) {
         console.error('Erro ao salvar imagem:', error);
@@ -330,7 +405,7 @@ app.post('/upload-image', async (req, res) => {
       const { data: insertedImage, error: insertError } = await supabase
         .from('venture_manager_files')
         .insert([{
-          filename: image.meta.name, url: `${baseUrl}/storage/v1/object/public/venture_manager_files/images/${idSpace}/${image.meta.name}`,
+          filename: imageName, url: `${baseUrl}/storage/v1/object/public/venture_manager_files/images/${idSpace}/${imageName}`,
           idSpace: idSpace
 
         }]);
@@ -457,7 +532,6 @@ app.delete('/delete-image', async (req, res) => {
     res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });
-
 
 
 

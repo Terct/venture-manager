@@ -18,6 +18,7 @@
     "express": "^4.18.3",
     "fs": "^0.0.1-security",
     "jsonwebtoken": "^9.0.2",
-    "moment-timezone": "^0.5.45"
+    "moment-timezone": "^0.5.45",
+    "uuid": "^9.0.1"
   }
 }
