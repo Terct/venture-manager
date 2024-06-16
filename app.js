@@ -390,7 +390,7 @@ app.post('/upload-image', async (req, res) => {
       const { data, error } = await supabase.storage
         .from('venture_manager_files')
         .upload(`images/${idSpace}/${imageName}`, imagemBuffer, {
-          contentType: image.meta.type,
+          contentType: image.meta.type || "image/jpeg",
           cacheControl: '3600',
         });
 
