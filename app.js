@@ -207,13 +207,13 @@ app.post('/update-baseIA', async (req, res) => {
 
 app.post('/manage-ventures', async (req, res) => {
   try {
-    const { jwt: token, newItem, images, action } = req.body;
+    const { jwt: token, newItem, images } = req.body;
 
     // Verificar se o token é válido
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
 
     // Obter usuário pelo ID do token
-    const { data: users, error } = await supabase
+    const { data: user, error } = await supabase
       .from('venture_manager_users')
       .select('ventures')
       .eq('id', decodedToken.userId)
@@ -223,37 +223,32 @@ app.post('/manage-ventures', async (req, res) => {
       return res.status(500).json({ error: 'Erro ao buscar usuário' });
     }
 
-    if (!users) {
+    if (!user) {
       return res.status(401).json({ error: 'Usuário não encontrado' });
     }
 
-    // Verificar se já existe outro empreendimento com o mesmo nome
-    const existingIndex = users.ventures.findIndex(venture => venture.idSpace === newItem.idSpace);
-    if (existingIndex !== -1 && action !== 'edit') {
-      return res.status(400).json({ error: 'Já existe um empreendimento com este ID' });
-    }
+    const { ventures } = user;
 
-    const updatedVentures = [...users.ventures];
-    if (action === 'edit') {
-      // Encontrar o item pelo idSpace e atualizá-lo
-      if (existingIndex !== -1) {
-        updatedVentures[existingIndex] = {
-          idSpace: newItem.idSpace,
-          nome: newItem.name,
-          preco: `R$ ${newItem.price}`,
-          imagens: images.map(image => ({
-            link: image.url,
-            descrição: image.description
-          })),
-          descricao: newItem.description,
-          localizacao: newItem.localization
-        };
-      } else {
-        return res.status(404).json({ error: 'Item não encontrado para edição' });
-      }
+    // Verificar se já existe um empreendimento com o mesmo idSpace
+    const existingIndex = ventures.findIndex(venture => venture.idSpace === newItem.idSpace);
+
+    if (existingIndex !== -1) {
+      // Empreendimento encontrado, atualizar
+      ventures[existingIndex] = {
+        idSpace: newItem.idSpace,
+        nome: newItem.name,
+        preco: `R$ ${newItem.price}`,
+        tipo: newItem.type,
+        imagens: images.map(image => ({
+          link: image.url,
+          descrição: image.description
+        })),
+        descricao: newItem.description,
+        localizacao: newItem.localization
+      };
     } else {
-      // Adicionar novo item ao array de empreendimentos
-      updatedVentures.push({
+      // Empreendimento não encontrado, adicionar novo
+      ventures.push({
         idSpace: newItem.idSpace,
         nome: newItem.name,
         preco: `R$ ${newItem.price}`,
@@ -269,7 +264,7 @@ app.post('/manage-ventures', async (req, res) => {
     // Atualizar usuário com o novo item na coluna ventures
     const { data: updatedUser, error: updateError } = await supabase
       .from('venture_manager_users')
-      .update({ ventures: updatedVentures })
+      .update({ ventures })
       .eq('id', decodedToken.userId)
       .single();
 
@@ -277,9 +272,10 @@ app.post('/manage-ventures', async (req, res) => {
       return res.status(500).json({ error: 'Erro ao atualizar usuário' });
     }
 
-    res.status(200).json({ message: 'Empreendimento ' + (action === 'edit' ? 'editado' : 'adicionado') + ' com sucesso!' });
+    const action = existingIndex !== -1 ? 'editado' : 'adicionado';
+    res.status(200).json({ message: `Empreendimento ${action} com sucesso!` });
   } catch (error) {
-    console.error('Erro ao adicionar/Editar empreendimento:', error);
+    console.error('Erro ao adicionar/editar empreendimento:', error);
     res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });

@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  venture_manager:
+    image: armcastr/venture_manager:1.0
+    environment:
+      SUPABASE_URL: $SUPABASE_URL
+      SUPABASE_KEY: $SUPABASE_KEY
+      JWT_SECRET: $JWT_SECRET
+    volumes:
+      - ./data/client:/data/client
